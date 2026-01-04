@@ -1,0 +1,154 @@
+---
+title: "Informe de Análisis Estadístico"
+author: "Turnos Mañana vs Tarde"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+# Configuración global de los chunks
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center")
+
+# Carga de librerías
+library(BSDA)
+library(ggplot2)
+library(Rmisc)
+library(car)
+library(e1071)
+library(tseries)
+library(knitr) # Necesario para tablas bonitas
+```
+
+# 1. Preparación de Datos
+
+En esta sección cargamos los datasets y filtramos las notas por turno.
+
+```{r carga_datos}
+# Cargar datos principales
+# Asegúrate de que los archivos .csv estén en la misma carpeta que este .Rmd
+encuesta.con.turno <- read.csv2("encuesta_turno.csv")
+
+# Separar subconjuntos
+nota.mañana <- encuesta.con.turno[encuesta.con.turno$TURNO == "Mañana", ]$NOTA
+nota.tarde <- encuesta.con.turno[encuesta.con.turno$TURNO == "Tarde", ]$NOTA
+
+# Cargar muestras pequeñas (si fueran necesarias para otros análisis)
+x_m <- read.csv2("20notasmañana.csv")
+notaM.pequeña <- x_m$x
+
+x_t <- read.csv2("20notastarde.csv")
+notaT.pequeña <- x_t$x
+
+# Verificación de carga
+cat("Datos cargados correctamente.\n")
+cat("Muestras Mañana (n):", length(nota.mañana), "\n")
+cat("Muestras Tarde (n):", length(nota.tarde))
+```
+
+# 2. Análisis Exploratorio
+
+A continuación, visualizamos la distribución de las notas comparando ambos turnos con su curva de densidad normal teórica.
+
+```{r histogramas, fig.width=10, fig.height=5}
+par(mfrow=c(1,2))
+L <- c(5,6,7,8,9,10,11)
+
+# Histograma Mañana
+hist(nota.mañana, breaks = L, main="Distribución Turno Mañana", 
+     ylim=c(0,0.6), freq = FALSE, col="lightblue", xlab="Nota")
+curve(dnorm(x, mean(nota.mañana), sd(nota.mañana)), add=TRUE, col="blue", lwd=2)
+
+# Histograma Tarde
+hist(nota.tarde, breaks = L, main="Distribución Turno Tarde", 
+     ylim=c(0,0.6), freq = FALSE, col="lightcoral", xlab="Nota")
+curve(dnorm(x, mean(nota.tarde), sd(nota.tarde)), add=TRUE, col="red", lwd=2)
+
+# Reseteamos par
+par(mfrow=c(1,1))
+```
+
+# 3. Verificación de Supuestos
+
+## Normalidad (Shapiro-Wilk)
+Evaluamos si los datos provienen de una distribución normal.
+
+```{r shapiro}
+# Test Shapiro-Wilk
+test_m <- shapiro.test(nota.mañana)
+test_t <- shapiro.test(nota.tarde)
+
+print(test_m)
+print(test_t)
+```
+
+## Gráficos Q-Q Normales
+Visualización de los cuantiles teóricos vs muestrales.
+
+```{r qqplots, fig.width=10, fig.height=5}
+par(mfrow=c(1,2))
+qqPlot(nota.mañana, main = "Q-Q Mañana", col.lines = "blue")
+qqPlot(nota.tarde, main = "Q-Q Tarde", col.lines = "red")
+par(mfrow=c(1,1))
+```
+
+## Homocedasticidad (Levene)
+Evaluamos si las varianzas son iguales entre los grupos.
+
+```{r levene}
+# Usamos la sintaxis de fórmula que es más robusta
+leveneTest(NOTA ~ TURNO, data = encuesta.con.turno)
+```
+
+# 4. Inferencia Estadística
+
+## Estimación de Intervalos
+
+```{r intervalos}
+# Cálculos de Z-test para intervalos
+ic.m.grande <- z.test(nota.mañana, sigma.x=sd(nota.mañana))
+ic.t.grande <- z.test(nota.tarde, sigma.x=sd(nota.tarde))
+
+# Creamos una tabla resumen ordenada
+tabla_resumen <- data.frame(
+  Turno = c("Mañana", "Tarde"),
+  Media = c(mean(nota.mañana), mean(nota.tarde)),
+  Lim_Inferior = c(ic.m.grande$conf.int[1], ic.t.grande$conf.int[1]),
+  Lim_Superior = c(ic.m.grande$conf.int[2], ic.t.grande$conf.int[2])
+)
+
+# Imprimimos la tabla con formato estético
+kable(tabla_resumen, digits = 3, caption = "Resumen de Medias e Intervalos de Confianza (95%)")
+```
+
+## Comparación de Medias (Z-Test)
+¿Existe una diferencia significativa entre las notas de la mañana y de la tarde?
+
+```{r ztest_comparacion}
+z.test(nota.mañana, nota.tarde, alternative="two.sided", 
+       sigma.x=sd(nota.mañana), sigma.y=sd(nota.tarde))
+```
+
+# 5. Visualización de Resultados
+
+Resumen final con gráfico de barras y error estándar.
+
+```{r grafico_final, fig.width=8, fig.height=6}
+# Calcular resumen estadístico
+res.grande <- summarySE(encuesta.con.turno, measurevar="NOTA", groupvars="TURNO")
+
+# Gráfico ggplot
+ggplot(res.grande, aes(x=TURNO, y=NOTA, fill=TURNO)) + 
+  geom_bar(stat="identity", alpha=0.7, width=0.5, color="black") +
+  geom_errorbar(aes(ymin=NOTA-ci, ymax=NOTA+ci), width = 0.2, size = 1) +
+  labs(title="Comparación de Notas Medias por Turno", 
+       subtitle = "Las barras de error representan el Intervalo de Confianza (95%)",
+       y="Nota Promedio",
+       x="Turno") +
+  scale_fill_manual(values = c("Mañana" = "lightblue", "Tarde" = "lightcoral")) +
+  theme_minimal() +
+  theme(legend.position = "none") # Ocultamos leyenda porque ya está en el eje X
+```
